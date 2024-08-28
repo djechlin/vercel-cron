@@ -9,10 +9,6 @@
     {
       "path": "/api/cron/1w",
       "schedule": "0 0 * * 0"
-    },
-    {
-      "path": "/api/cron/1mo",
-      "schedule": "0 0 1 * *"
     }
   ]
 }
