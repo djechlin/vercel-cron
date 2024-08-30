@@ -34,6 +34,44 @@ async function postToBluesky(content: string) {
   await agent.post({text: content});
 }
 
+interface AqiSummary {
+  emoji: string,
+  label: string,
+  displayAqi: string
+}
+
+interface AqiLevel {
+  color: string;
+  emoji: string,
+  label: string;
+  upperBound: number;
+}
+
+function getAqiLevel(aqi: number): AqiLevel {
+
+  const aqiLevels: AqiLevel[] = [
+    { color: 'green', label: 'Good', upperBound: 50, emoji: '🟢'},
+    { color: 'yellow', label: 'Moderate', upperBound: 100, emoji: '🟡'},
+    { color: 'orange', label: 'Unhealthy for sensitive groups', upperBound: 150, emoji: '🟠'},
+    { color: 'red', label: 'Unhealthy', upperBound: 200, emoji: '🔴'},
+    { color: 'purple', label: 'Very unhealthy', upperBound: 300, emoji: '🟣'},
+    // Brown is closest to maroon and also brown is what the sky looks like
+    { color: 'maroon', label: 'Hazardous', upperBound: Infinity, emoji: '🟤'}
+  ];
+
+  return aqiLevels.find(level => aqi <= level.upperBound) || aqiLevels[aqiLevels.length - 1];
+}
+
+function getAqiSummary(aqi: number) {
+  const aqiRounded = Math.round(aqi);
+  const [level, levelRounded] = [getAqiLevel(aqi), getAqiLevel(aqiRounded)];
+  return {
+    emoji: level.emoji,
+    label: level.label,
+    displayAqi: level.color === levelRounded.color ? aqiRounded : aqi
+  }
+}
+
 async function postAqiToBluesky() {
     if (!process.env.SENSOR_INDEX) {
     throw new Error('SENSOR_INDEX is not set in environment variables');
@@ -41,8 +79,8 @@ async function postAqiToBluesky() {
 
     const data = await getPurpleAirData(process.env.SENSOR_INDEX);
     const aqi = data.sensor.stats['pm2.5_10minute'];
-
-    await postToBluesky(`Current AQI near Central Park, NY: ${aqi}`);
+    const summary = getAqiSummary(aqi);
+    await postToBluesky(`AQI near Central Park, New York: ${summary.displayAqi} ${summary.emoji} (${summary.label})`);
 }
 
 
