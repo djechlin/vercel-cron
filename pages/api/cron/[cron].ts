@@ -19,6 +19,29 @@ async function getPurpleAirData(sensorIndex: string) {
   return response.data;
 }
 
+interface Record {
+  text: string;
+  createdAt: string;
+}
+
+interface FeedResponse {
+  feed: Array<{
+    post: {
+      record: Record;
+    };
+  }>;
+}
+
+async function getRecent(): Promise<Record> {
+  const url = 'https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed';
+
+  const response = await axios.get<FeedResponse>(url, {
+    params: { actor: 'aqibot.bsky.social', limit: 1 },
+  });
+
+  return response.data.feed[0].post.record;
+}
+
 async function postToBluesky(content: string) {
   const agent = new BskyAgent({
       service: 'https://bsky.social',
@@ -47,18 +70,22 @@ interface AqiLevel {
   upperBound: number;
 }
 
+const aqiLevels: AqiLevel[] = [
+  { color: 'green', label: 'Good', upperBound: 50, emoji: '🟢'},
+  { color: 'yellow', label: 'Moderate', upperBound: 100, emoji: '🟡'},
+  { color: 'orange', label: 'Unhealthy for sensitive groups', upperBound: 150, emoji: '🟠'},
+  { color: 'red', label: 'Unhealthy', upperBound: 200, emoji: '🔴'},
+  { color: 'purple', label: 'Very unhealthy', upperBound: 300, emoji: '🟣'},
+  // Brown is closest to maroon and also brown is what the sky looks like
+  { color: 'maroon', label: 'Hazardous', upperBound: Infinity, emoji: '🟤'}
+];
+
+function parseAqiLevel(post: string) {
+  return aqiLevels.find(level => post.includes(`(${level.label})`));
+}
+
+
 function getAqiLevel(aqi: number): AqiLevel {
-
-  const aqiLevels: AqiLevel[] = [
-    { color: 'green', label: 'Good', upperBound: 50, emoji: '🟢'},
-    { color: 'yellow', label: 'Moderate', upperBound: 100, emoji: '🟡'},
-    { color: 'orange', label: 'Unhealthy for sensitive groups', upperBound: 150, emoji: '🟠'},
-    { color: 'red', label: 'Unhealthy', upperBound: 200, emoji: '🔴'},
-    { color: 'purple', label: 'Very unhealthy', upperBound: 300, emoji: '🟣'},
-    // Brown is closest to maroon and also brown is what the sky looks like
-    { color: 'maroon', label: 'Hazardous', upperBound: Infinity, emoji: '🟤'}
-  ];
-
   return aqiLevels.find(level => aqi <= level.upperBound) || aqiLevels[aqiLevels.length - 1];
 }
 
@@ -72,7 +99,7 @@ function getAqiSummary(aqi: number) {
   }
 }
 
-async function postAqiToBluesky() {
+async function postAqiUpdate() {
     if (!process.env.SENSOR_INDEX) {
     throw new Error('SENSOR_INDEX is not set in environment variables');
   }
@@ -80,7 +107,20 @@ async function postAqiToBluesky() {
     const data = await getPurpleAirData(process.env.SENSOR_INDEX);
     const aqi = data.sensor.stats['pm2.5_10minute'];
     const summary = getAqiSummary(aqi);
-    await postToBluesky(`AQI near Central Park, New York: ${summary.displayAqi} ${summary.emoji} (${summary.label})`);
+
+    const lastPost = await getRecent();
+    const lastLevel = parseAqiLevel(lastPost.text);
+    const now = new Date().getTime();
+    const then = new Date(lastPost.createdAt).getTime();
+    const minutes = (now - then) / 1000 / 60;
+    if (!lastLevel) {
+      console.error('Couldn\'t parse last level: either a manual post or parsing is broken', lastPost);
+    }
+
+    // Post when level changes or every 6 hours
+    if (!lastLevel || lastLevel.label !== summary.label || minutes >= 6 * 60) {
+      await postToBluesky(`AQI near Central Park, New York: ${summary.displayAqi} ${summary.emoji} (${summary.label})`);
+    }
 }
 
 
@@ -91,8 +131,8 @@ export default async function handler(req: NextRequest) {
     return new NextResponse('Cron secret is wrong or missing', { status: 401 });
   }
 
-  const response = await postAqiToBluesky()
+  const response = await postAqiUpdate();
   return new NextResponse(JSON.stringify(response), {
     status: 200,
-  })
+  });
 }
